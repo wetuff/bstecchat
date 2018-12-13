@@ -1,0 +1,4 @@
+include ':BSTEC'
+
+rootProject.name = 'BSTEC Chat'
+

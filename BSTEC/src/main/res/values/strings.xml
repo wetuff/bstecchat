@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="app_name">BSTEC Chat</string>
+  <string name="action_settings">Settings</string>
+  <string name="notification_channel_id">30458300</string>
+</resources>
