@@ -7,8 +7,8 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Environment;
 import android.os.Handler;
-import android.os.Parcelable;
 import android.provider.MediaStore;
+import android.support.annotation.NonNull;
 import android.support.v4.app.ActivityCompat;
 import android.support.v4.content.ContextCompat;
 import android.util.Log;
@@ -33,7 +33,6 @@ import android.webkit.JavascriptInterface;
 import android.app.Service;
 import android.os.IBinder;
 import android.support.annotation.Nullable;
-import android.widget.Toast;
 
 import com.google.firebase.iid.FirebaseInstanceId;
 
@@ -51,7 +50,15 @@ public class MainActivity extends Activity {
     public int CHAT_ID = 0;
     public String CHAT_LAST_MESSAGE = null;
 
+    private final static int CAMERA_FILE_REQUEST_CODE = 1111;
+    private final static int AUDIO_REQUEST_CODE = 2222;
+    private PermissionRequest mMyRequest;
+    private String mFilePath;
+    private ValueCallback<Uri> mUploadMsg;
+    private ValueCallback<Uri[]> mPathsCallback;
+    private boolean mMultipleFilesAllowed = false;
 
+    /* ------- OLD --------
     private static final int INPUT_FILE_REQUEST_CODE = 1;
     private static final int FILECHOOSER_RESULTCODE = 1;
     private static final String TAG = MainActivity.class.getSimpleName();
@@ -59,6 +66,7 @@ public class MainActivity extends Activity {
     private Uri mCapturedImageURI = null;
     private ValueCallback<Uri[]> mFilePathCallback;
     private String mCameraPhotoPath;
+    */
 
     @Override
     protected void onStop() {
@@ -108,6 +116,7 @@ public class MainActivity extends Activity {
         finishNotification();
     }
 
+    /* ----- OLD -----------
     @Override
     public void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
@@ -167,12 +176,13 @@ public class MainActivity extends Activity {
         File storageDir = Environment.getExternalStoragePublicDirectory(
                 Environment.DIRECTORY_PICTURES);
         File imageFile = File.createTempFile(
-                imageFileName,  /* prefix */
-                ".jpg",         /* suffix */
-                storageDir      /* directory */
+                imageFileName,  // prefix
+                ".jpg",         // suffix
+                storageDir      // directory
         );
         return imageFile;
     }
+    */
 
 
     @Override
@@ -200,6 +210,98 @@ public class MainActivity extends Activity {
 
         // Stop local links and redirects from opening in browser instead of WebView
         mWebView.setWebViewClient(new MyAppWebViewClient());
+        mWebView.setWebChromeClient(new WebChromeClient() {
+
+            // Handling input (type="file") requests for android API 16+
+            public void openFileChooser(ValueCallback<Uri> uploadMsg, String acceptType, String capture) {
+                mUploadMsg = uploadMsg;
+                Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                i.addCategory(Intent.CATEGORY_OPENABLE);
+                i.setType("*/*");
+                if (mMultipleFilesAllowed && Build.VERSION.SDK_INT >= 18) {
+                    i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                }
+                startActivityForResult(Intent.createChooser(i, "Escolher uma ação"), CAMERA_FILE_REQUEST_CODE);
+            }
+
+            // Handling input (type="file") requests for android API 21+
+            public boolean onShowFileChooser(WebView webView, ValueCallback<Uri[]> filePathCallback, FileChooserParams fileChooserParams) {
+                String[] perms = {Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.CAMERA};
+
+                if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED && ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                    ActivityCompat.requestPermissions(MainActivity.this, perms, CAMERA_FILE_REQUEST_CODE);
+
+                } else if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED) {
+                    ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.WRITE_EXTERNAL_STORAGE, Manifest.permission.READ_EXTERNAL_STORAGE}, CAMERA_FILE_REQUEST_CODE);
+
+                } else if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                    ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.CAMERA}, CAMERA_FILE_REQUEST_CODE);
+                }
+
+                if (mPathsCallback != null) {
+                    mPathsCallback.onReceiveValue(null);
+                }
+
+                mPathsCallback = filePathCallback;
+                Intent takePictureIntent = new Intent(MediaStore.ACTION_IMAGE_CAPTURE);
+
+                if (takePictureIntent.resolveActivity(MainActivity.this.getPackageManager()) != null) {
+                    File photoFile = null;
+                    try {
+                        photoFile = createImageFile();
+                        takePictureIntent.putExtra("PhotoPath", mFilePath);
+                    } catch (IOException ex) {
+                        Log.e(MainActivity.class.getSimpleName(), "Image file creation failed", ex);
+                    }
+                    if (photoFile != null) {
+                        mFilePath = "file:" + photoFile.getAbsolutePath();
+                        takePictureIntent.putExtra(MediaStore.EXTRA_OUTPUT, Uri.fromFile(photoFile));
+                    } else {
+                        takePictureIntent = null;
+                    }
+                }
+
+                Intent contentSelectionIntent = new Intent(Intent.ACTION_GET_CONTENT);
+                contentSelectionIntent.addCategory(Intent.CATEGORY_OPENABLE);
+                contentSelectionIntent.setType("*/*");
+
+                if (mMultipleFilesAllowed) {
+                    contentSelectionIntent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
+                }
+
+                Intent[] intentArray;
+                if (takePictureIntent != null) {
+                    intentArray = new Intent[]{takePictureIntent};
+                } else {
+                    intentArray = new Intent[0];
+                }
+
+                Intent chooserIntent = new Intent(Intent.ACTION_CHOOSER);
+                chooserIntent.putExtra(Intent.EXTRA_INTENT, contentSelectionIntent);
+                chooserIntent.putExtra(Intent.EXTRA_TITLE, "Escolher uma ação");
+                chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, intentArray);
+                startActivityForResult(chooserIntent, CAMERA_FILE_REQUEST_CODE);
+
+                return true;
+            }
+
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {
+                mMyRequest = request;
+                for (String permission : request.getResources()) {
+
+                    if (permission.equals("android.webkit.resource.AUDIO_CAPTURE")) {
+                        if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                            ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.RECORD_AUDIO}, AUDIO_REQUEST_CODE);
+                        } else {
+                            mMyRequest.grant(mMyRequest.getResources());
+                        }
+                    }
+
+                }
+            }
+        });
+        /* -------- OLD ---------
         mWebView.setWebChromeClient(new WebChromeClient(){
             @Override
             public void onPermissionRequest(final PermissionRequest request) {
@@ -304,7 +406,7 @@ public class MainActivity extends Activity {
                 openFileChooser(uploadMsg, acceptType);
             }
 
-        });
+        }); */
 
         // Use local resource
         // mWebView.loadUrl("file:///android_asset/www/index.html");
@@ -326,6 +428,7 @@ public class MainActivity extends Activity {
 
     }
 
+    /* --------- OLD --------
     public void askForPermission(String origin, String permission, int requestCode) {
         Log.d("WebView", "inside askForPermission for" + origin + "with" + permission);
 
@@ -353,6 +456,7 @@ public class MainActivity extends Activity {
             myRequest.grant(myRequest.getResources());
         }
     }
+    */
 
     // Prevent the back-button from closing the bstec
     @Override
@@ -580,6 +684,73 @@ public class MainActivity extends Activity {
         }
 
 
+    }
+
+    private File createImageFile() throws IOException {
+        String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
+        String imageFileName = "img_" + timeStamp + "_";
+        File storageDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_PICTURES);
+        return File.createTempFile(imageFileName, ".jpg", storageDir);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent intent) {
+        super.onActivityResult(requestCode, resultCode, intent);
+        if (Build.VERSION.SDK_INT >= 21) {
+            Uri[] results = null;
+
+            if (resultCode == Activity.RESULT_OK) {
+                if (requestCode == CAMERA_FILE_REQUEST_CODE) {
+                    if (mPathsCallback == null) {
+                        return;
+                    }
+                    if (intent == null || intent.getData() == null) {
+                        if (mFilePath != null) {
+                            results = new Uri[]{Uri.parse(mFilePath)};
+                        }
+                    } else {
+                        String dataString = intent.getDataString();
+                        if (dataString != null) {
+                            results = new Uri[]{Uri.parse(dataString)};
+                        } else {
+                            if (mMultipleFilesAllowed) {
+                                if (intent.getClipData() != null) {
+                                    final int numSelectedFiles = intent.getClipData().getItemCount();
+                                    results = new Uri[numSelectedFiles];
+                                    for (int i = 0; i < numSelectedFiles; i++) {
+                                        results[i] = intent.getClipData().getItemAt(i).getUri();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            mPathsCallback.onReceiveValue(results);
+            mPathsCallback = null;
+        } else {
+            if (requestCode == CAMERA_FILE_REQUEST_CODE) {
+                if (mUploadMsg == null) {
+                    return;
+                }
+                Uri result = intent == null || resultCode != RESULT_OK ? null : intent.getData();
+                mUploadMsg.onReceiveValue(result);
+                mUploadMsg = null;
+            }
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+
+        if (requestCode == AUDIO_REQUEST_CODE) {
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                mMyRequest.grant(mMyRequest.getResources());
+            } else {
+                mMyRequest.deny();
+            }
+        }
     }
 
 }
